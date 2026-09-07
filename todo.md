@@ -1,0 +1,57 @@
+# Công việc nâng cấp cơ sở dữ liệu
+
+- [x] Đọc hướng dẫn full-stack và xác định cách nâng cấp dự án tĩnh.
+- [x] Kiểm tra cấu trúc website hiện tại và các điểm dữ liệu cần lưu.
+- [x] Nâng cấp dự án với backend, cơ sở dữ liệu và quản lý người dùng nếu cần.
+- [x] Thiết kế mô hình dữ liệu tối thiểu, không tạo dữ liệu giả.
+- [x] Thêm API lưu và đọc dữ liệu từ giao diện hiện tại.
+- [x] Kiểm tra các luồng tạo, đọc và cập nhật dữ liệu.
+- [x] Lưu checkpoint và bàn giao phiên bản mới.
+- [x] Sửa lỗi bố cục bị sai do trang legacy đang bị nhúng trong iframe.
+- [x] Loại bỏ cảnh báo đỏ bằng cách kết nối đúng API PHP hoặc chuyển trang sang runtime backend tương thích.
+- [x] Kiểm tra lại responsive, tab và console sau khi sửa lỗi.
+- [x] Kiểm tra thực tế luồng acc_save → acc_list bằng dữ liệu kiểm thử tạm thời không làm thay đổi dữ liệu người dùng.
+- [x] Kiểm tra thực tế luồng proxy_save → proxy_get và mimi_memory_save → mimi_memory_get, sau đó dọn dữ liệu kiểm thử.
+- [x] Kiểm tra lại tab chính, console và responsive sau bản sửa cuối.
+- [x] Lưu checkpoint mới sau toàn bộ thay đổi database, API bridge và bố cục.
+- [x] Dọn chính xác các bản ghi proxy và Mimi memory được tạo bởi smoke test.
+- [x] Lưu checkpoint mới sau khi xác nhận database sạch dữ liệu kiểm thử.
+- [x] Cập nhật smoke test để ghi lại legacy_scope và cleanup theo đúng scopeKey cùng recordType/recordKey.
+- [x] Xác nhận các record proxy và Mimi của đúng scope smoke test đã biến mất.
+- [x] Đối chiếu api3.php đính kèm với api3.php gốc và chatgpt.js hiện tại.
+- [x] Lập danh sách chức năng thiếu, không gọi được hoặc sai định dạng phản hồi.
+- [x] Sửa các chức năng ưu tiên: ai_chat, proxy_add, proxy_reset_state, nạp script Mimi và guard HMR mà không phá giao diện gốc.
+- [x] Tích hợp 624.gif làm trạng thái Mimi mặc định và 042.gif khi đang trả lời.
+- [x] Đồng bộ kích thước, nền, góc bo và tốc độ animation 0,75x cho hai GIF.
+- [x] Kiểm tra bằng source-level regression: trạng thái 624 mặc định, 042 khi thinking, reset 624 trong finally; kiểm tra tab/action JSON và console sau restart.
+- [x] Lưu checkpoint mới sau khi xác nhận các thay đổi.
+- [x] Đối chiếu toàn bộ action đang trả 501 với api3.php gốc và xác định phụ thuộc PHP/runtime/credential.
+- [x] Chọn phương án chạy api3.php gốc tương thích với deployment hiện tại.
+- [x] Kết nối fp_create_funpass và các action upstream liên quan vào backend.
+- [x] Xử lý lỗi, timeout và phản hồi JSON đúng định dạng legacy.
+- [x] Viết/cập nhật test cho các action upstream và chạy build production.
+- [x] Kiểm tra giao diện, console, API smoke test và lưu checkpoint mới.
+- [x] Đọc hướng dẫn automation/scheduling và kiểm tra connector GitHub hiện tại.
+- [x] Xác định trigger khả thi để website tự phát hiện push trên GitHub.
+- [x] Cấu hình cơ chế pull, kiểm tra xung đột và publish tự động an toàn.
+- [x] Kiểm thử cơ chế đồng bộ mà không ghi đè thay đổi người dùng.
+- [x] Ghi nhận trạng thái tự động hóa và giới hạn vận hành.
+- [x] Đọc hướng dẫn periodic updates và xác định chu kỳ kiểm tra phù hợp.
+- [x] Tạo quy trình so sánh commit GitHub với phiên website hiện tại.
+- [x] Chỉ pull, kiểm tra và publish khi phát hiện commit mới trên main.
+- [x] Cấu hình lịch tự động và tránh publish khi không có thay đổi.
+- [x] Kiểm thử trạng thái có/không có commit mới và ghi nhận giới hạn vận hành.
+- [x] Cấu hình lịch kiểm tra GitHub mỗi giờ cho repository Azuraseller/ld-tool-web, nhánh main.
+- [x] Bảo đảm không có commit mới thì không pull và không publish.
+- [x] Kiểm tra trạng thái lịch và bàn giao cách tự động hóa hoạt động.
+- [x] Mỗi lần phát hiện commit mới phải đồng bộ toàn bộ mã nguồn và chức năng mới từ main, không chỉ các tệp giao diện.
+- [x] Tự chạy kiểm tra/build trước publish và dừng an toàn nếu có lỗi hoặc xung đột.
+- [x] Không yêu cầu người dùng xác nhận trong quy trình đồng bộ định kỳ.
+- [x] Xác minh lịch active; trạng thái nền tảng hiện là ask_user nên chưa thể cam kết zero-touch tuyệt đối.
+- [x] Đánh giá workflow kiểm tra commit: hiện được thực thi qua playbook của lịch, chưa có endpoint/deploy hook trực tiếp.
+- [x] Ghi nhận giới hạn: chưa có run log skip tự động; điều kiện skip đã được cấu hình trong playbook.
+- [x] Ghi nhận giới hạn: chưa chạy một commit mới thật để tránh tự ý thay đổi repository; playbook yêu cầu test/build trước publish.
+- [x] Ghi tài liệu vận hành và giới hạn của cơ chế tự động GitHub.
+- [x] Giữ lịch tự động mỗi giờ hiện có làm cơ chế đồng bộ mặc định.
+- [x] Cập nhật playbook để ưu tiên đồng bộ toàn bộ source/chức năng mới và publish có điều kiện.
+- [x] Ghi rõ lịch active, task UID và giới hạn ask_user/triển khai trong báo cáo vận hành.
