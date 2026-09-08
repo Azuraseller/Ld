@@ -157,7 +157,7 @@ function mimi_guest_dir(): string {
 function mimi_data_file(string $basename, string $fallback): string {
     $user = mimi_auth_current();
     if ($user) return mimi_user_dir() . '/' . basename($basename);
-    if (!IS_CLI) return mimi_guest_dir() . '/' . basename($basename);
+    if (!IS_CLI || mimi_web_bridge()) return mimi_guest_dir() . '/' . basename($basename);
     return $fallback;
 }
 function mimi_with_lock(string $name, callable $callback): mixed {
@@ -177,6 +177,10 @@ function mimi_with_lock(string $name, callable $callback): mixed {
  * RUNTIME / LOGGING
  * ==========================================================================*/
 const IS_CLI = (PHP_SAPI === 'cli');
+// Node bridge gọi PHP bằng CLI nhưng vẫn cần hành vi tương tác của web
+// (đặc biệt là trả OTP sớm để người dùng nhập thủ công). CLI thật không bị ảnh hưởng.
+function mimi_web_bridge(): bool { return getenv('MIMI_WEB_BRIDGE') === '1'; }
+function mimi_web_request(): bool { return !IS_CLI || mimi_web_bridge(); }
 
 $GLOBALS['LOGS'] = [];
 $GLOBALS['STREAM'] = false;   // true = stream NDJSON về trình duyệt (console web hiện trực tiếp từng dòng đang chạy)
@@ -1528,7 +1532,7 @@ function get_otp_from_inbox(string $email, string $token, ?string $filter_type =
     $filter_name = $filter_type === "funpass" ? "Funpass" : ($filter_type === "ldplayer" ? "LDPlayer" : "tất cả");
     logmsg("  Chờ OTP từ {$filter_name}...");
     // Web dùng deadline monotonic để không bị kéo dài bởi time() làm tròn giây.
-    $manualDeadline = !IS_CLI ? microtime(true) + 6.0 : null;
+    $manualDeadline = mimi_web_request() ? microtime(true) + 6.0 : null;
     $proxy = proxy_for('temp_email', $proxyForce);
     $startedAt = microtime(true);
     $start = time();

@@ -86,6 +86,7 @@ export async function runPhpLegacyAction(
   const timeoutMs = Number(process.env.PHP_ACTION_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
   const env = {
     ...process.env,
+    MIMI_WEB_BRIDGE: "1",
     ...(identity.mimiUser ? { MIMI_USER: identity.mimiUser } : {}),
     ...(identity.guestScope
       ? { MIMI_GUEST: identity.guestScope.replace(/[^a-f0-9]/gi, "").slice(0, 32) }
