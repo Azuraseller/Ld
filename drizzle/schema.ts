@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -35,6 +35,7 @@ export const legacyRecords = mysqlTable("legacy_records", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, table => ({
   scopeRecordUnique: uniqueIndex("legacy_records_scope_record_unique").on(table.scopeKey, table.recordType, table.recordKey),
+  scopeRecordId: index("legacy_records_scope_record_id").on(table.scopeKey, table.recordType, table.id),
 }));
 
 export type LegacyRecord = typeof legacyRecords.$inferSelect;

@@ -118,6 +118,56 @@
   }
   function isHelpPlan(value) { return !!(value && typeof value === 'object' && Array.isArray(value.steps) && value.steps.length && value.steps.some(step => step && (step.action || step.click || step.wait_input))); }
   function tryJson(value) { try { const parsed = JSON.parse(String(value).trim()); return parsed && typeof parsed === 'object' ? parsed : null; } catch (_) { return null; } }
+  function isUiEditRequest(text) { return mimiIdentity === 'MimiVip01' && /(?:sửa|chỉnh|đổi|thay|thiết kế|màu|font|giao diện|layout|nút|button|kích thước|bố cục|source giao diện)/i.test(String(text || '')); }
+  function clearUiEditHighlights() { document.querySelectorAll('.ai-ui-edit-highlight').forEach(el => el.classList.remove('ai-ui-edit-highlight')); }
+  function highlightUiEditSelectors(selectors) {
+    clearUiEditHighlights();
+    const found = (Array.isArray(selectors) ? selectors : []).flatMap(selector => {
+      if (typeof selector !== 'string' || !/^[.#][A-Za-z][A-Za-z0-9_-]*$/.test(selector)) return [];
+      try { return [...document.querySelectorAll(selector)]; } catch (_) { return []; }
+    });
+    const unique = [...new Set(found)];
+    unique.forEach(el => el.classList.add('ai-ui-edit-highlight'));
+    unique[0]?.scrollIntoView({behavior:'smooth', block:'center'});
+    return unique;
+  }
+  function uiEditCard(data) {
+    const item = addMessage('assistant', '');
+    if (!item) return;
+    const style = document.createElement('style');
+    style.textContent = '.ai-ui-edit-highlight{outline:4px solid #ffd166!important;outline-offset:5px!important;box-shadow:0 0 0 10px rgba(255,209,102,.24),0 0 34px rgba(255,209,102,.55)!important;position:relative!important;z-index:2}.ai-ui-edit-card{margin-top:8px;padding:10px;border:1px solid #e0b94d;border-radius:12px;background:#211f32;color:#fff}.ai-ui-edit-card pre{max-height:180px;overflow:auto;white-space:pre-wrap;background:#0b1024;border:1px solid #3b4b83;border-radius:8px;padding:8px;font:11px/1.45 ui-monospace,monospace}.ai-ui-edit-card button{border:0;border-radius:8px;padding:8px 10px;margin:4px 5px 0 0;color:#fff;font-weight:700;cursor:pointer}.ai-ui-edit-apply{background:#3d8b68}.ai-ui-edit-reject{background:#765a98}.ai-ui-edit-card button:disabled{opacity:.55;cursor:wait}';
+    document.head.appendChild(style);
+    const card = document.createElement('div'); card.className = 'ai-ui-edit-card';
+    const title = document.createElement('b'); title.textContent = 'Mimi đã quét và đánh dấu vùng giao diện'; card.appendChild(title);
+    const info = document.createElement('div'); info.style.marginTop = '6px'; info.textContent = `${data.summary || 'Mimi đã chuẩn bị thay đổi.'} File: ${data.file || 'chưa xác định'}.`; card.appendChild(info);
+    const diff = document.createElement('pre'); const removed = Array.isArray(data.diff?.removed) ? data.diff.removed.map(line => '- ' + line) : []; const added = Array.isArray(data.diff?.added) ? data.diff.added.map(line => '+ ' + line) : []; diff.textContent = `Dòng bắt đầu: ${data.diff?.startLine || '?'}\n${[...removed, ...added].join('\n') || '(không có diff để hiển thị)'}`; card.appendChild(diff);
+    const note = document.createElement('div'); note.textContent = 'Nếu khung vàng đúng vùng cần sửa, bấm “Đúng, ghi source”. Nếu chưa đúng, bấm “Chưa đúng” và mô tả lại vùng cần di chuyển.'; card.appendChild(note);
+    const apply = document.createElement('button'); apply.className = 'ai-ui-edit-apply'; apply.textContent = 'Đúng, ghi source';
+    const reject = document.createElement('button'); reject.className = 'ai-ui-edit-reject'; reject.textContent = 'Chưa đúng, đổi vùng';
+    const actions = document.createElement('div'); actions.append(apply, reject); card.appendChild(actions); item.bubble.appendChild(card); highlightUiEditSelectors(data.selectors);
+    reject.addEventListener('click', () => { clearUiEditHighlights(); card.remove(); addMessage('assistant', 'Đã hủy bản sửa. Mimi chưa ghi source. Bạn mô tả lại vùng giao diện cần sửa nhé.'); setMood('neutral'); inputFocus(); });
+    apply.addEventListener('click', async () => {
+      apply.disabled = true; reject.disabled = true; apply.textContent = 'Đang ghi source…'; setMood('thinking');
+      try {
+        const response = await fetch(apiUrl('ui_source_apply'), {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','Accept':'application/json'}, body:JSON.stringify({token:data.token, confirm:true})});
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Không ghi được source');
+        clearUiEditHighlights(); card.replaceChildren(); const done = document.createElement('div'); done.textContent = `Đã ghi thay đổi vào ${result.file}. Cần build/redeploy hoặc reload HMR để bản giao diện mới xuất hiện.`; card.appendChild(done); addMessage('assistant', 'Mimi đã ghi source giao diện thành công.'); setMood('success');
+      } catch (error) { apply.disabled = false; reject.disabled = false; apply.textContent = 'Đúng, ghi source'; const err = document.createElement('div'); err.className = 'ai-error'; err.textContent = 'Mimi chưa ghi được source: ' + (error?.message || 'lỗi không xác định'); card.appendChild(err); setMood('alert'); }
+    });
+  }
+  async function requestUiEdit(text) {
+    const typing = addTyping(); setBusy(true);
+    try {
+      const response = await fetch(apiUrl('ui_source_plan'), {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','Accept':'application/json'}, body:JSON.stringify({request:text})});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.error || `UI source editor HTTP ${response.status}`);
+      if (typing) typing.bubble.textContent = data.mode === 'needs_clarification' ? (data.summary || 'Mimi cần bạn mô tả rõ vùng giao diện hơn.') : 'Mimi đang chờ bạn kiểm tra khung vàng trên giao diện.';
+      if (data.mode === 'preview') uiEditCard(data); else { setMood('alert'); inputFocus(); }
+      setMood(data.mode === 'preview' ? 'help' : 'alert');
+    } catch (error) { if (typing) typing.bubble.textContent = 'Mimi chưa quét được source giao diện: ' + (error?.message || 'lỗi không xác định'); setMood('alert'); }
+    finally { setBusy(false); scrollBottom(); }
+  }
   function extractLabeledJson(source, label) {
     const re = label === 'AI_HELP' ? /(?:^|\n)\s*AI_HELP\s*:?\s*/ig : /(?:^|\n)\s*AI_ACTION\s*:?\s*/ig;
     for (const match of String(source).matchAll(re)) {
@@ -470,7 +520,7 @@
 
   async function send(text) {
     text = String(text || '').trim(); if (!text || state.busy) return; const input = document.querySelector('.ai-input'); if (input) { input.value = ''; input.style.height = 'auto'; input.blur(); }
-    state.lastUserRequest = text; addMessage('user', text); state.conversation.push({role:'user', content:text}); saveConversation(); if (await handleAuthCommand(text)) return; if (handleLocalGreeting(text)) { state.conversation.push({role:'assistant', content:'Ơi, Mimi đây, bạn cần giúp gì nè.'}); saveConversation(); return; } if (handleLocalAccountQuestion(text)) { state.conversation.push({role:'assistant', content:'Đã tra cứu tài khoản trong phiên hiện tại.'}); saveConversation(); return; } if (handleLocalFunctionList(text)) { state.conversation.push({role:'assistant', content:'Mimi đã giải thích các nhóm chức năng bằng ngôn ngữ dễ hiểu.'}); saveConversation(); return; } const typing = addTyping(); setBusy(true);
+    state.lastUserRequest = text; addMessage('user', text); state.conversation.push({role:'user', content:text}); saveConversation(); if (await handleAuthCommand(text)) return; if (handleLocalGreeting(text)) { state.conversation.push({role:'assistant', content:'Ơi, Mimi đây, bạn cần giúp gì nè.'}); saveConversation(); return; } if (handleLocalAccountQuestion(text)) { state.conversation.push({role:'assistant', content:'Đã tra cứu tài khoản trong phiên hiện tại.'}); saveConversation(); return; } if (handleLocalFunctionList(text)) { state.conversation.push({role:'assistant', content:'Mimi đã giải thích các nhóm chức năng bằng ngôn ngữ dễ hiểu.'}); saveConversation(); return; } if (isUiEditRequest(text)) { await requestUiEdit(text); return; } const typing = addTyping(); setBusy(true);
     try { const raw = sanitizeAiText(await askServer(state.conversation)).trim(); if (!raw) throw new Error('AI không trả lời'); const parsed = extractPayload(raw); if (parsed.help) { parsed.request = text; parsed.help = applyDeveloperTarget(parsed.help, text); }       if (typing) { typing.bubble.innerHTML = markdownLite(parsed.text || 'Mình đã xử lý.'); if (parsed.help) attachHelpPlan(typing.bubble, parsed.help); if (parsed.command) attachCommand(typing.bubble, parsed.command); } state.conversation.push({role:'assistant', content:parsed.text || 'Mình đã xử lý.'}); saveConversation(); setMood(parsed.help ? 'help' : parsed.mood); }
     catch (err) { const msg = String(err && err.message || 'Lỗi không xác định'); const risk = /90001|security risk|tạm dừng thao tác/i.test(msg); if (risk) window.fpRiskBlockedUntil = Date.now() + 10 * 60 * 1000; if (typing) { typing.row.classList.add('ai-error'); typing.bubble.textContent = risk ? 'Máy chủ đang tạm dừng thao tác vì lý do an toàn. Mimi không tự thử lại.' : `Lỗi: ${msg}`; } setMood('alert'); }
     finally { setBusy(false); scrollBottom(); }

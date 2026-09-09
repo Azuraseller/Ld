@@ -46,6 +46,29 @@ export const PHP_UPSTREAM_ACTIONS = new Set([
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 const MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+const READ_POOL_SIZE = Math.max(1, Number(process.env.PHP_READ_POOL_SIZE || 2));
+let activeReadWorkers = 0;
+const readWorkerQueue: Array<() => void> = [];
+
+async function withReadWorker<T>(job: () => Promise<T>): Promise<T> {
+  if (activeReadWorkers < READ_POOL_SIZE) {
+    activeReadWorkers += 1;
+  } else {
+    await new Promise<void>(resolve => readWorkerQueue.push(resolve));
+    activeReadWorkers += 1;
+  }
+  try {
+    return await job();
+  } finally {
+    activeReadWorkers -= 1;
+    readWorkerQueue.shift()?.();
+  }
+}
+
+function perfLog(event: string, fields: Record<string, unknown>) {
+  if (process.env.PERF_LOG !== "1") return;
+  console.info(JSON.stringify({ perf: event, ...fields }));
+}
 
 function parseJsonOutput(output: string): Record<string, unknown> {
   const trimmed = output.trim();
@@ -92,7 +115,9 @@ export async function runPhpLegacyAction(
       ? { MIMI_GUEST: identity.guestScope.replace(/[^a-f0-9]/gi, "").slice(0, 32) }
       : {}),
   };
-  try {
+  const started = performance.now();
+  const execute = async () => {
+   try {
     if (onLog) {
       const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
         const child = spawn(phpBinary, [scriptPath, action, inputJson], { cwd: path.dirname(scriptPath), env, windowsHide: true });
@@ -143,7 +168,7 @@ export async function runPhpLegacyAction(
       result.logs = stderr.trim().split(/\r?\n/).slice(-200);
     }
     return result;
-  } catch (error) {
+   } catch (error) {
     const err = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string; code?: string | number };
     // api3.php exits with code 1 for expected business errors but still emits
     // a valid JSON envelope on stdout. Preserve that envelope for the UI.
@@ -162,5 +187,25 @@ export async function runPhpLegacyAction(
     }
     const detail = String(err.stderr || err.stdout || err.message || "Lỗi PHP không xác định").trim();
     throw new Error(`Action ${action} lỗi trong api3.php: ${detail.slice(-1200)}`);
+   }
+  };
+  try {
+    // This is the first bounded worker-pool prototype. It deliberately targets
+    // one read action before a PHP-FPM rollout, so concurrent reads cannot spawn
+    // an unbounded number of PHP processes.
+    const result = action === "modules_list" ? await withReadWorker(execute) : await execute();
+    perfLog("php.action", {
+      action,
+      pool: action === "modules_list" ? "bounded-read" : "cli",
+      durationMs: Math.round((performance.now() - started) * 100) / 100,
+    });
+    return result;
+  } catch (error) {
+    perfLog("php.action.error", {
+      action,
+      durationMs: Math.round((performance.now() - started) * 100) / 100,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
 }

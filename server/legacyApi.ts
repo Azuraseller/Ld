@@ -1,12 +1,15 @@
 import type { Express, Request, Response } from "express";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 import { invokeLLM, type Message } from "./_core/llm";
 import { PHP_UPSTREAM_ACTIONS, runPhpLegacyAction } from "./phpLegacy";
 import { deleteLegacyRecords,
   getLegacyRecord,
   listLegacyRecords,
+  listLegacyRecordsPage,
   upsertLegacyRecord,
 } from "./db";
 
@@ -16,6 +19,78 @@ const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 const MIMI_USERS = ["MimiVip01", "Apimimi01", "Apimimi05", "Apimimi10"] as const;
 const execFileAsync = promisify(execFile);
 const DEFAULT_GITHUB_REPO = "Azuraseller/ld-tool-web";
+const UI_SOURCE_ROOT = path.resolve(process.cwd(), "client", "src");
+const UI_SOURCE_EXTENSIONS = new Set([".css", ".html", ".js", ".jsx", ".ts", ".tsx"]);
+const UI_EDIT_TTL_MS = 10 * 60 * 1000;
+const pendingUiEdits = new Map<string, { user: string; file: string; before: string; after: string; sourceHash: string; expiresAt: number }>();
+
+function requireMimiDeveloper(req: LegacyRequest, res: Response): string | null {
+  const user = currentMimiUser(req);
+  if (user !== "MimiVip01") {
+    res.status(403).json({ ok: false, error: "Chỉ MimiVip01 mới được chỉnh sửa source giao diện." });
+    return null;
+  }
+  return user;
+}
+
+function safeUiSourcePath(file: unknown): { relative: string; absolute: string } {
+  const relative = String(file || "").trim().replaceAll("\\", "/");
+  const absolute = path.resolve(process.cwd(), relative);
+  const extension = path.extname(relative).toLowerCase();
+  if (!relative.startsWith("client/src/") || !UI_SOURCE_EXTENSIONS.has(extension) || !absolute.startsWith(UI_SOURCE_ROOT + path.sep)) {
+    throw new Error("Chỉ được chỉnh sửa file source giao diện trong client/src.");
+  }
+  return { relative, absolute };
+}
+
+function sourceSelectors(source: string, query = "") {
+  const wanted = String(query || "").trim().toLowerCase();
+  const selectors = new Set<string>();
+  Array.from(source.matchAll(/\bid=["']([A-Za-z][A-Za-z0-9_-]*)["']/g)).forEach(match => selectors.add(`#${match[1]}`));
+  Array.from(source.matchAll(/\bclass=["']([^"']+)["']/g)).forEach(match => {
+    for (const name of match[1].split(/\s+/)) if (/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) selectors.add(`.${name}`);
+  });
+  Array.from(source.matchAll(/document\.getElementById\(["']([^"']+)["']\)/g)).forEach(match => selectors.add(`#${match[1]}`));
+  return Array.from(selectors).filter(selector => !wanted || selector.toLowerCase().includes(wanted)).slice(0, 80);
+}
+
+function sourceDiff(before: string, after: string) {
+  const beforeLines = before.split("\n");
+  const afterLines = after.split("\n");
+  let start = 0;
+  while (start < beforeLines.length && start < afterLines.length && beforeLines[start] === afterLines[start]) start++;
+  let beforeEnd = beforeLines.length - 1;
+  let afterEnd = afterLines.length - 1;
+  while (beforeEnd >= start && afterEnd >= start && beforeLines[beforeEnd] === afterLines[afterEnd]) { beforeEnd--; afterEnd--; }
+  return {
+    startLine: start + 1,
+    removed: beforeLines.slice(start, beforeEnd + 1).slice(0, 80),
+    added: afterLines.slice(start, afterEnd + 1).slice(0, 80),
+  };
+}
+
+function sourceHash(source: string) {
+  return createHash("sha256").update(source).digest("hex");
+}
+
+async function scanUiSources(query = "") {
+  const entries = await fs.readdir(UI_SOURCE_ROOT, { recursive: true });
+  const files = entries.filter(entry => UI_SOURCE_EXTENSIONS.has(path.extname(entry).toLowerCase())).sort((a, b) => {
+    const priority = (value: string) => /legacy\.html$/.test(value) ? 0 : /legacy-source\.js$/.test(value) ? 1 : /index\.css$/.test(value) ? 2 : /pages\//.test(value) ? 3 : 4;
+    return priority(a) - priority(b) || a.localeCompare(b);
+  });
+  const result = [];
+  for (const file of files.slice(0, 300)) {
+    const relative = `client/src/${file.replaceAll(path.sep, "/")}`;
+    const { absolute } = safeUiSourcePath(relative);
+    const source = await fs.readFile(absolute, "utf8");
+    const selectors = sourceSelectors(source, query);
+    if (!query || selectors.length || relative.toLowerCase().includes(query.toLowerCase())) {
+      result.push({ file: relative, bytes: Buffer.byteLength(source), selectors });
+    }
+  }
+  return result;
+}
 
 function githubRepo(): string {
   return String(process.env.GITHUB_REPO || DEFAULT_GITHUB_REPO).trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
@@ -149,7 +224,7 @@ export async function handleLegacyAction(req: LegacyRequest, res: Response) {
   const targetUser = String((body as Record<string, unknown>)._target_user || req.query._target_user || "").trim();
   const scope = getScope(req, res, targetUser);
   const method = req.method.toUpperCase();
-  const readOnly = new Set(["ping", "proxy_get", "mt_session", "acc_list", "runlog_list", "modules_list", "mimi_models_get", "auth_status", "mimi_memory_get", "mimi_chats_get", "github_status"]);
+  const readOnly = new Set(["ping", "proxy_get", "mt_session", "acc_list", "runlog_list", "modules_list", "mimi_models_get", "auth_status", "mimi_memory_get", "mimi_chats_get", "github_status", "ui_source_scan"]);
   if (method !== "POST" && !readOnly.has(action)) {
     badMethod(res);
     return true;
@@ -186,6 +261,135 @@ export async function handleLegacyAction(req: LegacyRequest, res: Response) {
         }
         const latest = await githubLatestCommit();
         res.json({ ok: true, ...latest });
+        return true;
+      }
+      case "ui_source_scan": {
+        if (!requireMimiDeveloper(req, res)) return true;
+        const query = String(body.query || "").trim().slice(0, 120);
+        res.json({ ok: true, files: await scanUiSources(query), root: "client/src", editable_extensions: Array.from(UI_SOURCE_EXTENSIONS) });
+        return true;
+      }
+      case "ui_source_plan": {
+        const user = requireMimiDeveloper(req, res);
+        if (!user) return true;
+        const request = String(body.request || "").trim().slice(0, 2000);
+        if (!request) {
+          res.status(400).json({ ok: false, error: "Thiếu yêu cầu chỉnh sửa giao diện." });
+          return true;
+        }
+        const files = await scanUiSources("");
+        const candidates = files.filter(item => /legacy|index\.css|pages|components/i.test(item.file) || /legacy|css|react|component|trang|giao diện/i.test(request));
+        let budget = 360_000;
+        const sourceParts: string[] = [];
+        for (const item of (candidates.length ? candidates : files).slice(0, 35)) {
+          if (budget <= 0) break;
+          const source = await fs.readFile(path.resolve(process.cwd(), item.file), "utf8");
+          const clipped = source.slice(0, Math.min(source.length, budget));
+          sourceParts.push(`\n--- FILE ${item.file} ---\n${clipped}`);
+          budget -= clipped.length;
+        }
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: "Bạn là Mimi UI Source Editor. Chỉ lập kế hoạch sửa giao diện source. Chỉ chọn file dưới client/src, không sửa server, PHP, database, auth hoặc secret. Phải giữ nguyên nội dung không liên quan. Trả đúng JSON theo schema; before phải là đoạn nguyên văn xuất hiện trong file, after là đoạn thay thế hoàn chỉnh. selectors chỉ dùng CSS selector ID/class có thật trong source để frontend đánh dấu vùng preview. Nếu chưa xác định được, trả can_edit=false và before/after rỗng.",
+            },
+            { role: "user", content: `Yêu cầu của MimiVip01: ${request}\n\nCác source giao diện đã quét:\n${sourceParts.join("\n")}` },
+          ],
+          maxTokens: 1800,
+          outputSchema: {
+            name: "ui_edit_plan",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                can_edit: { type: "boolean" },
+                summary: { type: "string" },
+                file: { type: "string" },
+                before: { type: "string" },
+                after: { type: "string" },
+                selectors: { type: "array", items: { type: "string" }, maxItems: 8 },
+              },
+              required: ["can_edit", "summary", "file", "before", "after", "selectors"],
+            },
+          },
+        });
+        const content = response.choices?.[0]?.message?.content;
+        const raw = Array.isArray(content) ? content.filter(part => part.type === "text").map(part => part.text).join("\n") : String(content || "{}");
+        const plan = JSON.parse(raw) as { can_edit?: boolean; summary?: string; file?: string; before?: string; after?: string; selectors?: string[] };
+        if (!plan.can_edit) {
+          res.json({ ok: true, mode: "needs_clarification", summary: plan.summary || "Mimi chưa xác định được vùng giao diện cần sửa." });
+          return true;
+        }
+        const { relative, absolute } = safeUiSourcePath(plan.file);
+        const before = String(plan.before || "");
+        const after = String(plan.after || "");
+        const current = await fs.readFile(absolute, "utf8");
+        if (!before || !after || before === after) {
+          res.status(409).json({ ok: false, error: "Mimi không tạo được bản sửa hợp lệ cho source hiện tại." });
+          return true;
+        }
+        if (!current.includes(before)) {
+          res.status(409).json({ ok: false, error: "Đoạn source Mimi chọn không còn khớp. Hãy quét lại giao diện." });
+          return true;
+        }
+        const next = current.replace(before, after);
+        const token = randomUUID();
+        pendingUiEdits.set(token, { user, file: relative, before: current, after: next, sourceHash: sourceHash(current), expiresAt: Date.now() + UI_EDIT_TTL_MS });
+        res.json({ ok: true, mode: "preview", token, file: relative, summary: plan.summary || "Mimi đã chuẩn bị thay đổi giao diện.", diff: sourceDiff(current, next), selectors: (plan.selectors || []).filter(selector => typeof selector === "string" && /^[.#][A-Za-z][A-Za-z0-9_-]*$/.test(selector)).slice(0, 8), expiresInMs: UI_EDIT_TTL_MS });
+        return true;
+      }
+      case "ui_source_preview": {
+        const user = requireMimiDeveloper(req, res);
+        if (!user) return true;
+        const { relative, absolute } = safeUiSourcePath(body.file);
+        const before = String(body.before ?? "");
+        const after = String(body.after ?? "");
+        if (!before || !after || before === after) {
+          res.status(400).json({ ok: false, error: "Bản xem trước phải có nội dung trước và sau khác nhau." });
+          return true;
+        }
+        if (Buffer.byteLength(after, "utf8") > 2 * 1024 * 1024) {
+          res.status(413).json({ ok: false, error: "Bản sửa giao diện vượt quá giới hạn 2 MB." });
+          return true;
+        }
+        const current = await fs.readFile(absolute, "utf8");
+        if (current !== before) {
+          res.status(409).json({ ok: false, error: "Source đã thay đổi. Mimi cần quét lại trước khi tạo bản xem trước." });
+          return true;
+        }
+        const token = randomUUID();
+        pendingUiEdits.set(token, { user, file: relative, before, after, sourceHash: sourceHash(current), expiresAt: Date.now() + UI_EDIT_TTL_MS });
+        res.json({ ok: true, mode: "preview", token, file: relative, diff: sourceDiff(before, after), selectors: Array.isArray(body.selectors) ? body.selectors.slice(0, 20) : sourceSelectors(current), expiresInMs: UI_EDIT_TTL_MS });
+        return true;
+      }
+      case "ui_source_apply": {
+        const user = requireMimiDeveloper(req, res);
+        if (!user) return true;
+        const token = String(body.token || "");
+        const pending = pendingUiEdits.get(token);
+        if (!pending || pending.user !== user || pending.expiresAt < Date.now()) {
+          pendingUiEdits.delete(token);
+          res.status(409).json({ ok: false, error: "Bản xem trước đã hết hạn hoặc không thuộc phiên MimiVip01." });
+          return true;
+        }
+        if (body.confirm !== true) {
+          res.status(400).json({ ok: false, error: "Cần xác nhận rõ ràng trước khi ghi source." });
+          return true;
+        }
+        const { absolute } = safeUiSourcePath(pending.file);
+        const current = await fs.readFile(absolute, "utf8");
+        if (sourceHash(current) !== pending.sourceHash || current !== pending.before) {
+          pendingUiEdits.delete(token);
+          res.status(409).json({ ok: false, error: "Source đã thay đổi trước khi xác nhận. Mimi chưa ghi file." });
+          return true;
+        }
+        const temp = `${absolute}.${process.pid}.${randomUUID()}.tmp`;
+        await fs.writeFile(temp, pending.after, "utf8");
+        await fs.rename(temp, absolute);
+        pendingUiEdits.delete(token);
+        res.json({ ok: true, applied: true, file: pending.file, sourceHash: sourceHash(pending.after), message: "Đã ghi thay đổi giao diện vào source. Hãy reload để xem bản build mới." });
         return true;
       }
       case "github_sync": {
@@ -243,8 +447,15 @@ export async function handleLegacyAction(req: LegacyRequest, res: Response) {
         return true;
       }
       case "acc_list": {
-        const accounts = await listRecords<Record<string, unknown>>(scope, "account");
-        res.json({ ok: true, accounts, logs: [] });
+        const page = await listLegacyRecordsPage(scope, "account", {
+          limit: Number(body.limit || req.query.limit || 100),
+          cursor: Number(body.cursor || req.query.cursor || 0) || undefined,
+        });
+        const accounts = page.records.flatMap(record => {
+          const value = readPayload<Record<string, unknown> | null>(record.payload, null);
+          return value === null ? [] : [value];
+        });
+        res.json({ ok: true, accounts, ...(page.nextCursor ? { next_cursor: page.nextCursor } : {}), logs: [] });
         return true;
       }
       case "acc_save": {
@@ -282,9 +493,18 @@ export async function handleLegacyAction(req: LegacyRequest, res: Response) {
         res.json({ ok: true, msg: "Đã xóa tài khoản", accounts: await listRecords(scope, "account"), logs: [] });
         return true;
       }
-      case "runlog_list":
-        res.json({ ok: true, history: await listRecords(scope, "runlog"), logs: [] });
+      case "runlog_list": {
+        const page = await listLegacyRecordsPage(scope, "runlog", {
+          limit: Number(body.limit || req.query.limit || 100),
+          cursor: Number(body.cursor || req.query.cursor || 0) || undefined,
+        });
+        const history = page.records.flatMap(record => {
+          const value = readPayload<LegacyValue | null>(record.payload, null);
+          return value === null ? [] : [value];
+        });
+        res.json({ ok: true, history, ...(page.nextCursor ? { next_cursor: page.nextCursor } : {}), logs: [] });
         return true;
+      }
       case "runlog_clear":
         await deleteLegacyRecords(scope, "runlog");
         res.json({ ok: true, history: [], logs: [] });

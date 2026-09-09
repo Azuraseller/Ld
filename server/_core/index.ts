@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express from "express";
+import compression from "compression";
 import { createServer } from "http";
+import crypto from "node:crypto";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
@@ -32,9 +34,28 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use(compression({ threshold: 1024 }));
+  app.use((req, res, next) => {
+    const started = performance.now();
+    const requestId = req.headers["x-request-id"]?.toString() || crypto.randomUUID();
+    res.setHeader("X-Request-Id", requestId);
+    res.on("finish", () => {
+      if (process.env.PERF_LOG !== "1") return;
+      console.info(JSON.stringify({
+        perf: "http.request",
+        requestId,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: Math.round((performance.now() - started) * 100) / 100,
+      }));
+    });
+    next();
+  });
+  const jsonLimit = process.env.JSON_BODY_LIMIT || "1mb";
+  const formLimit = process.env.FORM_BODY_LIMIT || "1mb";
+  app.use(express.json({ limit: jsonLimit }));
+  app.use(express.urlencoded({ limit: formLimit, extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   // Compatibility API for the original api3.php UI. It must run before Vite's fallback.
@@ -51,6 +72,12 @@ async function startServer() {
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
+    app.use((req, res, next) => {
+      if (/\.[a-f0-9]{8,}\.(?:js|css|woff2?|png|jpg|jpeg|svg|webp)$/i.test(req.path)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+      next();
+    });
     serveStatic(app);
   }
 

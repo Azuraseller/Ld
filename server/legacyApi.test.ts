@@ -97,6 +97,20 @@ describe("legacy API bridge", () => {
     });
   });
 
+  it("blocks UI source scanning for guests", async () => {
+    const response = createResponse();
+    await handleLegacyAction({
+      method: "GET",
+      query: { action: "ui_source_scan" },
+      headers: { cookie: "" },
+      secure: false,
+      body: {},
+    } as never, response as never);
+
+    expect(response.statusCode).toBe(403);
+    expect(response.payload).toMatchObject({ ok: false });
+  });
+
   it("rejects malformed manual account JSON before persistence", async () => {
     const response = createResponse();
     await handleLegacyAction({
