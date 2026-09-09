@@ -720,7 +720,7 @@ function startOtpWatch(action, data, fromMimi, showConsole){
     if (hint) hint.textContent = 'Đang chờ server xác nhận phiên OTP...';
     setOtpInputValue(otpEarlyCode);
     if (submit) { submit.disabled = true; submit.title = 'Đang chờ server xác nhận phiên OTP'; }
-  }, 6000);
+  }, 10000);
 }
 function stopOtpWatch(){ if (otpPromptTimer){ clearTimeout(otpPromptTimer); otpPromptTimer = null; } }
 function otpInputValue(){ return Array.from(document.querySelectorAll('#otpCells .otp-cell')).map(el => (el.value || '').replace(/\D/g,'').slice(0,1)).join(''); }
@@ -756,7 +756,7 @@ function showOtpBox(j, action, data, fromMimi, showConsole){
   otpPending = {action, data:Object.assign({}, data || {}), ctx:(j && j.ctx) || {}, fromMimi:!!fromMimi, showConsole:!!showConsole};
   const box = document.getElementById('otpBox');
   const hint = document.getElementById('otpHint');
-  if (hint) hint.textContent = 'Chưa nhận được mã sau 6 giây. Kiểm tra email ' + (j && j.email ? j.email : '') + ' rồi nhập đúng 6 chữ số.';
+  if (hint) hint.textContent = 'Chưa nhận được mã sau 10 giây. Kiểm tra email ' + (j && j.email ? j.email : '') + ' rồi nhập đúng 6 chữ số.';
   if (box) box.style.display = 'block';
   setOtpInputValue(otpEarlyCode);
   const submit = document.getElementById('otpSubmitBtn');

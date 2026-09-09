@@ -24,4 +24,4 @@
 
 ## OTP và tốc độ
 
-PHP bridge đặt `MIMI_WEB_BRIDGE=1`. Vì vậy khi chạy qua website, PHP trả trạng thái `otp_required` sau khoảng 6 giây để người dùng nhập OTP; chạy CLI thật vẫn giữ thời gian chờ tự động đầy đủ.
+PHP bridge đặt `MIMI_WEB_BRIDGE=1`. Vì vậy khi chạy qua website, PHP trả trạng thái `otp_required` sau khoảng 10 giây để người dùng nhập OTP; chạy CLI thật vẫn giữ thời gian chờ tự động đầy đủ.

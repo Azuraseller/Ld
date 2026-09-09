@@ -1532,7 +1532,8 @@ function get_otp_from_inbox(string $email, string $token, ?string $filter_type =
     $filter_name = $filter_type === "funpass" ? "Funpass" : ($filter_type === "ldplayer" ? "LDPlayer" : "tất cả");
     logmsg("  Chờ OTP từ {$filter_name}...");
     // Web dùng deadline monotonic để không bị kéo dài bởi time() làm tròn giây.
-    $manualDeadline = mimi_web_request() ? microtime(true) + 6.0 : null;
+    // Cho người dùng đủ thời gian chờ email OTP trước khi hiện ô nhập thủ công.
+    $manualDeadline = mimi_web_request() ? microtime(true) + 10.0 : null;
     $proxy = proxy_for('temp_email', $proxyForce);
     $startedAt = microtime(true);
     $start = time();
